@@ -1,10 +1,108 @@
-# Milestone 3
+# Milestone 5
 
 # Objective
 
-In this milestone you will write routines to read files into memory and
-execute programs.  You will then write a basic shell program that will
-execute other programs and print out ASCII text files.
+In the previous milestones you wrote a single process operating system
+where only one program could be executed at a time.  In this project
+you will make it possible for up to eight programs to be executing
+concurrently.
+
+*You will also reflet on what you have done during the last five
+weeks.*
+
+
+# Multitasking
+
+There are two basic requirements for multitasking.  First, you need to
+have a preemptive scheduler that can interrupt a process and save its
+state, find a new process, and start executing it.  Second, you need
+to have memory management so that the processes do not get in the way
+of each other.  Ideally, no process ever knows that it is interrupted
+and every process thinks it has the whole computer to itself.
+
+
+# Memory management
+
+Nearly all modern operating systems use virtual memory, which
+completely isolates one process from another.  Although all processors
+since the 386 support virtual memory, you will not use it in this
+project.  Instead, you will take advantage of an earlier method called
+segmentation.
+
+As you observed in previous projects, all addresses in real mode are
+20 bits long, while all registers are 16 bits.  To address 20 bits,
+the processor has six segment registers (of which only three are
+really important): CS (code segment), SS (stack
+segment), and DS (data segment).  All instruction fetches
+implicitly use the CS register, stack operations (including
+local variables) the SS register, and data operations (global
+variables and strings) the DS register.  The actual address
+used by any instruction consist of the 16 bit value the program thinks
+it is using, plus the appropriate segment register times 0x10
+(shifted left by 4).  For example, if your program states: JMP
+  0x147, and the CS register contains 0x3000, then
+the computer actually jumps to 0x3000 * 0x10 + 0x147, or
+0x30147.
+
+An interesting note is that 16-bit C programs (those compiled with
+bcc) never touch the segment registers.  The pleasant thing
+about this is if we set the registers beforehand ourselves, the same
+program can run in two different areas of memory without knowing.  For
+example, if we set the CS register to 0x2000 and ran
+the above program, it would have jumped to 0x20147 instead of
+0x30147.  If all of our segment register values are
+0x1000 away from each other, the program's memory spaces will
+never overlap.
+
+The catch to all this is that programs must be limited to
+64KB in size and never touch the segment registers
+themselves.  They also must never crash and accidentally take out the
+rest of memory.  That is why this approach has not been used in
+practical operating systems since the 1980s.  However, 64KB
+will be enough for our operating system.
+
+
+# Scheduling
+
+All x86 computers (and most others) come equipped with a
+timer chip that can be programmed to produce interrupts periodically
+every few milliseconds.  The interrupt produced by this timer is
+interrupt 8.  If the timer is enabled, this means that the
+program is interrupted and the interrupt 8 service routine is
+run every few milliseconds.  Your scheduler should be called by the
+interrupt 8 service routine.
+
+The scheduler's task is to choose another process and start it
+running.  Consequently it needs to know who all the active processes
+are and where they are located in memory.  It does this using a
+process table.
+
+Every interrupt 8, the scheduler should back up all the
+registers onto the process's own stack.  It should then save the stack
+pointer (the key to where all this information is stored) in the
+process's process table entry.  It should select a new process from
+the table, restore its stack pointer, and restore its registers.  When
+the timer returns from interrupt, this new process will start running.
+
+
+# Loading and terminating
+
+Creating a new process is a matter of finding a free segment for it,
+putting it in the process table, and giving it a stack.  If a program,
+such as the shell, wants to execute a program, it creates a new
+process, copies the program into the new process's memory, and just
+waits around until the timer preempts it.  Eventually the scheduler
+will start the new process.  Terminating a program is done by removing
+the program from the process table and busy waiting until the timer
+goes off.  Since the program no longer has a process table entry, the
+computer will never go back to it.
+
+An interesting thing now is that a program (e.g., the shell) does not
+have to terminate when it executes another program.  Instead it can
+start the new process running and move on to another task.  The shell,
+for example, can start another process running and not end.  This is
+known as making a background process; the user can still use the shell
+to do other things and the new program runs in the background.
 
 
 # Tools
@@ -12,328 +110,265 @@ execute other programs and print out ASCII text files.
 You will use the same utilities you used in the last milestone, and
 you will also need to have completed the previous milestones
 successfully.  Additionally, you will need to update your project
-repository to get the m3 folder, which contains the new kernel.asm,
-map.img, dir.img, lib.asm, loadFile.c, message.txt, tstprg, and
-tstpr2.  Copy the other parts of your solution for the previous
-milestone from the m2 folder into the m3 folder and build upon them.
+repository to get the m5 folder, which contains the new
+kernel.asm and lib.asm (which support the timer),
+and phello (a test program).  Copy the other parts of your
+solution for the previous milestone from the m4 folder into
+the m5 folder and build upon them.
+
+
+# Timer Interrupt
+
+Making a timer interrupt service routine is almost identical to the
+interrupt 0x21 service routine.  The only difference is that
+the service routine must back up all the registers and reinitialize
+the timer.
+
+Since nearly everything related to making this service routine
+involves handling the registers, this step is mostly already done for
+you in assembly.  You are provided with three new assembly functions.
+The first, makeTimerInterrupt sets up the timer interrupt
+vector and initializes the timer.  You need simply call it at the end
+of main in kernel.c before launching the shell.  The
+second assembly function is the interrupt 8 service routine,
+which calls handleTimerInterrupt (which you must write) that
+takes two arguments, the segment and the sp
+(e.g. void handleTimerInterrupt(int segment, int sp)).  The
+third is returnFromTimer which you will call at the end of
+handleTimerInterrupt.
+
+For now, your handleTimerInterrupt routine should call
+printString to print out a message (such as "Tic")
+and call returnFromTimer with the same two parameters that
+were passed into handleTimerInterrupt.
+
+Compile your operating system and run it.  If it is successful, you
+will still be able to use the shell, but you will see the screen fill
+up with "Tic"s.
+
+
+# Process Table
+
+Be sure to comment out the printString in
+handleTimerInterrupt before proceeding.
+
+A process table entry should store two pieces of information:
+
+* Whether or not the process is active (stored as an int:
+  1=active, 0=inactive)
+* The process's stack pointer (stored as an int)
+
+
+The process table itself should be a global array in
+kernel.c.  Note that you do not have to store the segment,
+since that is what you will use to index the table.  You should choose
+to make an entry a struct.
+
+Your table should contain eight entries.  Segment 0x2000
+should index entry 0, and segment 0x9000 should index entry
+7.  Thus, to find the correct table entry, divide the segment by
+0x1000 and subtract 2.
+
+To keep track of the current process, you should have a global integer
+variable currentProcess, that points to the process table
+entry currently executing.
+
+Initialize the process table in main before calling
+makeTimerInterrupt.  For each entry in the process table, set
+active to 0 and set the stack pointer to 0xff00 (this is the
+initial stack location for each segment).  Set currentProcess
+to 0.
 
+Now revise your interrupt 0x21 execute program
+function.  Instead of launching a program at the segment given as a
+parameter, it should launch programs in a free segment.  In
+executeProgram,
+
+1. Search through the process table for a free entry,
+2. Set that entry to \textit{active, and
+3. Call launchProgram on that entry's segment.
+
+You should change executeProgram so that it takes only one
+parameter, the name of the program to execute.  Make sure your
+operating system compiles correctly.
 
-# The File System
+# Load Program
 
-One of the key functions of a file system is to keep a record of the
-names and sectors of files on the disk.  The file system in this
-operating system utilizes two sectors at the beginning of the disk.
-The Disk Map sits at sector 1, and the Directory
-sits at sector 2.  This is the reason your kernel starts at sector 3.
+## initializeProgram
 
-The Map records which sectors are available and which sectors
-are currently used by files.  This makes it easy to find a free sector
-when writing a file.  Each sector on the disk is represented by one
-byte in the Map.  A byte entry of 0xFF means that the sector
-is used.  A byte entry of 0x00 means that the sector is free.  You
-will not need to read or modify the Map in this milestone
-since you are only reading files in this milestone.  You will need to
-read and modify the Map in the next milestone.
+launchProgram never returns to the program that called it.
+This is a problem for multitasking -- you want the caller program to
+be able to continue running while the new program runs.
 
-The Directory lists the names and locations of the files.
-There are 16 file entries in the Directory and each entry
-contains 32 bytes (32 times 16 = 512, which is the storage capacity of
-a sector).  The first six bytes of each directory entry is the file
-name.  The remaining 26 bytes are sector numbers, which tell where the
-file is on the disk.  If the first byte of the entry is 0x0, then
-there is no file at that entry.
+You are provided with a new assembly function
+initializeProgram which takes a segment as an argument
+(e.g. void initializeProgram(int segment)).  This function
+sets up a stack frame and registers for the new program, but does not
+actually start running it.  Change your executeProgram
+function to call initializeProgram instead of
+launchProgram.
 
-For example, a file entry of:
+## terminate
 
+Additionally, terminate needs to be modified.  Currently, it
+reloads the shell.  However, in a multitasking OS the shell
+never stops running.  Modify terminate so that it sets the
+process that called it (i.e. currentProcess) to inactive and
+starts an infinite loop.  Eventually, the timer will go off and the
+scheduler will choose a new process.
 
-    4B 45 52 4E 45 4C 03 04 05 06 00 00 00 00 00 00 00 00 00 00...
-    K  E  R  N  E  L
+## setKernelDataSegment
 
+At this point, there is a problem with accessing the proper data
+segment.  The process table is a global variable and is stored in the
+kernel's segment.  However, when interrupt 0x21 is called,
+the DS register still points to the caller's segment.  When
+you try reading the process table in executeProgram and
+terminate, you are actually accessing garbage in the calling
+process's segment instead.
 
-means that this is a valid file, with name ``KERNEL'', located at
-sectors 3, 4, 5, 6.  (00 is not a valid sector number but a
-filler since every entry must be 32 bytes).
+To solve this, you are provided with two more assembly functions:
+setKernelDataSegment and restoreDataSegment.  You
+must call setKernelDataSegment before accessing the process
+table in both executeProgram and terminate.  In
+executeProgram, you should then call
+restoreDataSegment right after accessing the process table.
 
-If a file name is less than 6 bytes, the remainder of the 6 bytes
-should be filled with 00s.
+## enableInterrupts
 
-Note that this file system is very restrictive.  Since one byte
-represents a sector, there can be no more than 256 sectors used on the
-disk (128KB of storage).  Additionally, since a file can have no more
-than 26 sectors, file sizes are limited to 13KB.  For this project,
-this is adequate storage, but for a modern operating system, this
-would be grossly inadequate.
+By default, hardware boots and programs are started with interrupts
+disabled.  This means that programs cannot currently be preempted.
+You are provided with an enableInterrupts function in
+lib.asm.  You should call that function at the very beginning
+of shell and all other user programs.
 
 
-# Initial Map and Directory
+# Scheduling
 
-The new files map.img and dir.img contain a
-Map and Directory for a file system consisting of
-only the kernel.  Modify your Makefile to include the
-following lines in the appropriate place:
+Now you should write the scheduler (handleTimerInterrupt) so
+that it chooses a program using round robin.  The scheduler should
+first save the stack pointer (sp) in the current process
+table entry.  Then it should look through the process table starting
+at the next entry after currentProcess and choose another process to
+run (loop back to the beginning when you get to the end).  Finally, it
+should set currentProcess to that entry, and call
+returnFromTimer with that entry's segment and stack pointer.
 
-    dd if=map.img of=floppya.img bs=512 count=1 seek=1 conv=notrunc
-    dd if=dir.img of=floppya.img bs=512 count=1 seek=2 conv=notrunc
+If there are no active processes, the scheduler should just call
+returnFromTimer with the segment and stack pointer it was
+called with.
 
+## Testing
 
-This sets up your initial file system.
+Compile your operating system and check that the shell loads
+correctly.
 
+The phello test program prints out "Hello World"
+ten thousand times.  In the shell, "execute phello".  It
+should start printing.  While it is printing, you should still be able
+to issue shell commands: try typing "dir".
 
-# loadFile
 
-You are provided with a utility loadFile.c, which can be
-compiled with gcc (e.g. gcc -o loadFile loadFile.c).
-loadFile reads a file and writes it to floppya.img,
-modifying the Map and Directory appropriately.  For
-example, to copy message.txt from the previous milestone to
-the file system, type:
+# Kill Process
 
-    ./loadFile message.txt
+You should create a new interrupt and shell command that terminates a
+process (similar to the kill command in Unix).  A user should be able
+to type "kill 3" in the shell and process 3 should be
+forcibly terminated.
 
-This saves the trouble of using dd and modifying the
-Map and Directory.
+You will need to do three things:
 
-Note that "message.txt" is more than six letters.  loadFile
-will truncate the name to six letters on loading it.  The file name
-will become "messag".  Note also that unless otherwise indicated,
-all implementation must be done in kernel.c.
+1. Create a killProcess function in kernel.c,
+2. Create a new interrupt 0x21 call to terminate a
+  process, and
+3. Add the command to the shell.
 
+Killing a process is simply a matter of setting that process's process
+table entry to inactive (0).  Once that is done, the process will
+never be scheduled again.
 
-# Load A File And Print It
+Your interrupt 0x21 call should take the form:
 
-Create a new function readFile that takes a character array containing
-a file name and reads the file into a buffer.  After completing the
-readFile function, make it an interrupt 0x21 call:
 
+Kill process
+* AX = 9 (or the next available value for AX)
+* BX = process id (from 0 to 7)
 
-Read File:
-* AX = 3
-* BX = address of character array containing the file name
-* CX = address of a buffer to hold the file
 
+## Testing
 
-The readFile function should work as follows:
+From the shell, start phello executing.  Then quickly type
+"kill 1".  If you immediately stop seeing "Hello
+  World" and are able to type shell commands normally, then your
+\textit{kill function works.
 
-1. Load the directory sector into a 512 byte character array using
-  readSector.
-2. Go through the directory trying to match the file name.  If you do
-  not find it, return.
-3. If found, using the sector numbers in the directory, load the file,
-  sector by sector, into the buffer array.  You should add 512 to the
-  buffer address every time you call readSector.
-4. Return.
 
+# Process Blocking
 
-# Testing
+You will notice that all calls to execute run concurrently
+with the shell.  It is often convenient for the shell to stop
+executing temporarily while the new process is running, and then
+resume when the new process terminates.  This is essential if the new
+process wants keyboard input; otherwise it has to compete with the
+shell.
 
-Use the readFile function to read in a text file and print it
-out.  You can use the message.txt file from the previous
-milestone.
+This can be done by marking processes in the process table as
+"waiting".  There should also be a field in the process
+table entry stating what other process the process is waiting on.  A
+process marked as waiting is never executed by the scheduler
+but is also never overwritten.
 
-In main:
+When a process is killed or terminates, any processes waiting on it
+should be set back to active.
 
-    char buffer[13312]  /* this is the maximum size of a file */
-    makeInterrupt21();
+You should make another execute interrupt 0x21 call that
+causes the caller process to "wait."  Then make a new shell
+command "execforeground filename" that causes the shell to
+block until the program "filename" terminates.
 
-    interrupt(0x21, 3, “messag\0”, buffer, 0);  /* read the file into buffer */
-    interrupt(0x21, 0, buffer, 0, 0);	    /* print out the file */
 
-    while(1);			            /* hang */
+# Optional Features
 
+For extra credit credit (up to 50 additional points) you might want to
+implement a few additional features in you operating system.  The more
+advanced or complex the featues are, the more points you will receive.
+Below is a partial list of possible optional features that you might
+want to consider:
 
-Then:
 
-    ./loadFile message.txt
+* Quit command,
+* Clear screen command,
+* Help screen that lists and describes available commands,
+* Print size as a number of sectors for dir command, and
+* Option to change foreground and background colors.
 
+Of course, you can add other features that are not included in this
+partial list.  In order to receive credit for your additoinal
+features, you should describe them in your README file and
+include instructions on how to use each.
 
 
-# Load A Program And Execute It
+# Reflection
 
-The next step is to load a program into memory and execute it.  This
-really consists of four steps:
+Write a formal, well formatted, edited, 2-4 page document (saved as a
+pdf file in the top level project folder) that describes:
 
-1. Loading the program into a buffer (a big character array).
-2. Transferring the program into the bottom of the segment where
-  you want it to run.
-3. Setting the segment registers to that segment and setting the
-  stack pointer to the program's stack.
-4. Jumping to the program.
 
+1. Known bugs in your project,
+2. Special features (beyond or different from those described in
+  the specifications) that you implemented and how to use them,
+3. Interesting or clever implementation techniques that you used,
+4. Lessons learned from the project experience (complete
+  individually), and
+5. Technical things learned (complete individually).
 
-To try this out, you are provided with a test program tstprg.
-Write a function to load tstprg into memory and start it
-running.  Then, after compiling, use loadFile to load
-tstprg into floppya.img.
-
-Write a new executeProgram function that takes as a parameter
-the name of the program you want to run (as a character array) and the
-segment where you want it to run (e.g. void
-  executeProgram(char* name, int segment))
-
-The segment should be a multiple of 0x1000 (remember that a
-segment of 0x1000 means a base memory location of 0x10000).
-0x0000 should not be used because it is reserved for
-interrupt vectors.  0x1000 also should not be used because
-your kernel lives there and you do not want to overwrite it.  Segments
-above 0xA000 are unavailable because the original IBM-PC was
-limited to 640k of memory.  (Memory, incidentally, begins again at
-address 0x100000, but you cannot address this in 16-bit real
-mode.  This is why all modern operating systems run in at least 32-bit
-protected mode).
-
-Your function should do the following:
-
-  1. Call readFile to load the file into a buffer.
-  2. In a loop, transfer the file from the buffer into the start
-  (0000) of memory at the segment in the parameter.  You should use
-  putInMemory to do this.
-  3. Call the assembly function launchProgram, which takes the segment
-  number as a parameter (e.g. void launchProgram(int segment)).  This
-  is because setting the registers cannot be done in C.  The assembly
-  function will set up the registers and jump to the program.  The
-  thread of execution will never return from this function.
-
-
-Finally, make your function a new interrupt 0x21 call, using
-the following:
-
-Load program and execute it:
-* AX = 4
-* BX = address of character array holding the name of the program
-* CX = segment in memory to put the program
-
-
-# A Warning
-
-When your program calls the kernel via an interrupt, it's very
-important that the kernel code not use any kernel global variables.
-In particular, you should NOT have your kernel code use any double
-quoted strings - these are stored as globals, even if you declare them
-in a function.  This can make your life hard, as it means that
-printing debugging messages from the kernel usually requires strings.
-
-The solution is to declare strings as character arrays in the function.
-
-
-    char abc[7];
-    abc[0]= ‘s’;
-    abc[1]= ‘t’;
-    abc[2]= ‘r’;
-    abc[3]= ‘i’;
-    abc[4]= ‘n’;
-    abc[5]= ‘g’;
-    abc[6]= ‘\0’;
-
-
-# Testing
-
-In main:
-
-    makeInterrupt21();
-    interrupt(0x21, 4, “tstprg\0”, 0x2000, 0);
-    while(1);
-
-
-If your interrupt works and tstprg runs, your kernel will
-never make it to the while(1).  Instead, the tstprg
-will print out a message and then hang.
-
-
-# Terminate Program System Call
-
-This step is simple but essential.  When a user program finishes, it
-should make an interupt 0x21 call to return to the operating
-system.  This call terminates the program.  For now, you should just
-have a terminate call hang up the computer, though you will soon
-change it to make the system reload the shell.
-
-Make a terminate function, which for now contains an infinite
-while loop.
-
-Next, make an interrupt 0x21 to terminate a program.  It
-should be defined as:
-
-Terminate program:
-* AX = 5
-
-Verify with the tstpr2 program provided.  Unlike
-tstprg, tstpr2 does not hang up at the end but calls
-the terminate program interrupt.
-
-
-# The Shell - Making Your Own User Program
-
-You now are ready to make the shell!  Use the file lib.asm.
-It contains a single assembly language function: interrupt.
-Your shell should not need any more assembly functions since all low
-level functions are provided by the kernel.
-
-Your shell should be called shell.c and should be compiled
-the same way the kernel is compiled.  However, in this case, you will
-need to assemble lib.asm intead of kernel.asm and
-link lib.o instead of kernel\_asm.o.  Your final file
-should be called ``shell''.
-
-After you compile the shell, use loadFile to load the shell
-onto floppya.img.  You should add all of these commands to
-your Makefile.
-
-Your initial shell should run in an infinite loop.  On each iteration,
-it should print a prompt ("SHELL> "  or "A:> " or
-something like that).  It should then read in a line and try to match
-that line to a command.  If it is not a valid command, it should print
-an error message (e.g. ``Bad Command!'' or something similar)
-and prompt again.  Since you do not have any shell commands yet,
-anything typed in should cause an error message to be printed.
-
-All input/output in your shell should be implemented using
-interrupt 0x21 calls.  You should not rewrite or reuse any of
-the kernel functions.  This makes the OS modular: if you want to
-change the way things are printed to the screen, you only need to
-change the kernel, not the shell or any other user program.
-
-## Kernel adjustments
-
-In your kernel:
-
-  1. Modify main so that it simply sets up the
-  interrupt 0x21 using makeInterrupt21, and calls an
-  interrupt 0x21 to load and execute "shell" at
-  segment 0x2000.
-  2. Modify terminate so that it no longer hangs.  Instead
-  it should use interrupt 0x21 to reload and execute
-  ``shell'' at segment 0x2000.
-
-
-
-## Shell Command "type"
-
-Modify your shell to recognize the command "type filename".
-If the user types "type messag" at the shell prompt, the
-shell should load messag into memory and print out the
-contents.  You should implement this using interrupt 0x21
-calls.
-
-
-## Shell Command "execute"
-
-Modify your shell to recognize the command "execute
-  filename".  If the user types "execute tstpr2" at the
-shell prompt, the shell should call the interrupt 0x21 to
-load and execute tstpr2 at segment 0x2000
-(overwriting the shell).
-
-Test this by typing "execute tstpr2" at the shell prompt.
-If you are successful, tstpr2 should run, print out its message, and
-then you should get a shell prompt again.
 
 
 # Turning It In
 
-Be sure to submit your updated kernel.c and Makefile along with all of
- the files necessary to build and run your OS to your team repository
- in the the m3 folder.  Be sure to include a README that explains 1)
- what you did, and 2) how to verify it.  Please include a comment at
- the top of each file with the name of each team member and your team
- number.  In addition, be sure to submit all other deliverables that
- are highlighted on the project’s main page.
+Be sure to submit your complete project to your team repository in the
+the m5 folder.  Be sure to include a README that
+explains 1) what you did, and 2) how to verify it.  Please include a
+comment at the top of each file with the name of each team member and
+your team number.  In addition, be sure to submit all other
+deliverables that are highlighted on the project’s main page.
